@@ -1,0 +1,42 @@
+---
+- name: Copying configs to git
+  template: src=git.config dest=/home/hacker/.gitconfig
+- name: cloning from git
+  git:
+    repo: https://github.com/boryashkin/obsession.git
+    dest: /var/www/obsession
+    #version: 1.0 #fix group_by and release the app first, cause 1.0 doesn't work with strict group by's
+    update: no
+#https://www.digitalocean.com/community/tutorials/understanding-and-implementing-fastcgi-proxying-in-nginx
+- name: Copying configs to nginx
+  template: src={{ item.src }} dest={{ item.dest }}
+  with_items:
+    - { src: 'nginx-site.conf', dest: '/etc/nginx/sites-available/obsession.conf' }
+    - { src: 'nginx-site.conf', dest: '/etc/nginx/sites-enabled/obsession.conf' }
+  tags:
+      - nginx-configuration
+- name: Start Nginx
+  service: name=nginx state=reloaded
+
+#for ansible 2.2.1 composer global is not accessible, so
+- name: install composer
+  shell: curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+  args:
+    creates: /usr/local/bin/composer
+- name: preparing composer to install yii2.0
+  shell: composer global require "fxp/composer-asset-plugin:~1.1.1"
+  tags:
+    - composer.install
+- name: composer install
+  composer: command=install working_dir=/var/www/obsession no_dev=False
+  tags:
+    - composer.install
+- name: changing ownership of a files
+  file:
+    path: /var/www/obsession
+    owner: www-data
+    group: www-data
+    state: directory
+    recurse: yes
+  tags:
+    - chown

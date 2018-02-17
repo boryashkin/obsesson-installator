@@ -1,0 +1,21 @@
+---
+
+- name: Add the php7 source to the APT source list
+  apt_repository: repo="ppa:ondrej/php" state=present
+  tags:
+    - php7-installation
+
+- name: Install Php7
+  apt: name={{item}} state=present
+  with_items:
+   - php7.1-fpm
+   - php7.1-mysql
+   - php7.1-curl
+   - php7.1-gd
+   - php7.1-json
+   - php7.1-mcrypt
+   - php7.1-opcache
+   - php7.1-xml
+   - php7.1-mbstring
+  tags:
+    - php7-installation

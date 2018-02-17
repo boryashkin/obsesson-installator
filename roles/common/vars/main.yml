@@ -1,0 +1,4 @@
+---
+mysql_backup: /tmp
+mysql_back_email: user@localhost
+

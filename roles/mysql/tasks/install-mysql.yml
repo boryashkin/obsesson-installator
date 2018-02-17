@@ -1,0 +1,142 @@
+---
+- name: Check if MySQL is already installed.
+  stat: path=/etc/init.d/mysql
+  register: mysql_installed
+
+- name: Update apt cache if MySQL is not yet installed.
+  apt: update_cache=yes
+  when: mysql_installed.stat.exists == false
+
+- name: Ensure MySQL Python libraries are installed.
+  apt: "name=python-mysqldb state=installed"
+
+- name: Ensure MySQL packages are installed.
+  apt: "name={{ item }} state=installed"
+  with_items:
+   - mysql-common
+   - mysql-server
+  register: deb_mysql_install_packages
+
+# Because Ubuntu starts MySQL as part of the install process, we need to stop
+# mysql and remove the logfiles in case the user set a custom log file size.
+- name: Ensure MySQL is stopped after initial install.
+  service: "name=mysql state=stopped"
+  when: mysql_installed.stat.exists == false
+
+- name: Check if MySQL packages were installed.
+  set_fact:
+    mysql_install_packages: "{{ (rh_mysql_install_packages is defined and rh_mysql_install_packages.changed)
+      or (deb_mysql_install_packages is defined and deb_mysql_install_packages.changed)
+      or (arch_mysql_install_packages is defined and arch_mysql_install_packages.changed) }}"
+
+
+- name: Delete innodb log files created by apt package after initial install.
+  file: path={{ mysql_datadir }}/{{item}} state=absent
+  with_items:
+          - "ib_logfile0"
+          - "ib_logfile1"
+  when: mysql_installed.stat.exists == false
+
+- name: Install MySql
+  apt: name={{item}} state=present
+  with_items:
+   - mysql-common
+   - mysql-server
+
+- name: Copy my.cnf global MySQL configuration.
+  template:
+    src: my.j2
+    dest: "{{ mysql_config_file }}"
+    owner: root
+    group: root
+    mode: 0644
+  notify: restart mysql
+
+- name: Configure MySql
+  lineinfile: dest="/etc/mysql/mysqCopy my.cnf global MySQL configuration.l.conf.d/mysqld.cnf" regexp="{{item.regexp}}" line="{{item.line}}" state=present backup=yes
+  with_items:
+    - { regexp: 'bind-address', line: '#bind-address           = 0.0.0.0' }
+  notify: restart mysql
+
+- name: Ensure MySQL is started and enabled on boot.
+  service: "name=mysql state=started enabled=yes"
+  register: mysql_service_configuration
+
+#secure
+- name: Get MySQL version.
+  command: 'mysql --version'
+  register: mysql_cli_version
+  changed_when: false
+
+- name: Copy root-my.cnf file with password credentials.
+  template:
+    src: "root-my.cnf.j2"
+    dest: "{{ mysql_root_home }}/.my.cnf"
+    owner: "{{ mysql_root_username }}"
+    mode: 0600
+
+- name: Ensure default user is present.
+  mysql_user:
+    name: "{{ mysql_user_name }}"
+    host: 'localhost'
+    password: "{{ mysql_user_password }}"
+    priv: '*.*:ALL,GRANT'
+    state: present
+  when: mysql_user_name != mysql_root_username
+
+# Has to be after the password assignment, for idempotency.
+- name: Copy user-my.cnf file with password credentials.
+  template:
+    src: "user-my.cnf.j2"
+    dest: "{{ mysql_user_home }}/.my.cnf"
+    owner: "{{ mysql_user_name }}"
+    mode: 0600
+  when: mysql_user_name != mysql_root_username
+
+- name: Disallow root login remotely
+  command: 'mysql -NBe "{{ item }}"'
+  with_items:
+    - DELETE FROM mysql.user WHERE User='{{ mysql_root_username }}' AND Host NOT IN ('localhost', '127.0.0.1', '::1')
+  changed_when: false
+
+- name: Get list of hosts for the root user.
+  command: mysql -NBe "SELECT Host FROM mysql.user WHERE User = '{{ mysql_root_username }}' ORDER BY (Host='localhost') ASC"
+  register: mysql_root_hosts
+  changed_when: false
+  check_mode: no
+  when: mysql_install_packages | bool
+
+- name: Get list of hosts for the anonymous user.
+  command: mysql -NBe 'SELECT Host FROM mysql.user WHERE User = ""'
+  register: mysql_anonymous_hosts
+  changed_when: false
+  check_mode: no
+
+# Note: We do not use mysql_user for this operation, as it doesn't always update
+# the root password correctly. See: https://goo.gl/MSOejW
+# Set root password for MySQL >= 5.7.x.
+- name: Update MySQL root password for localhost root account (5.7.x).
+  shell: >
+    mysql -u root -NBe
+    'ALTER USER "{{ mysql_root_username }}"@"{{ item }}" IDENTIFIED WITH mysql_native_password BY "{{ mysql_root_password }}";'
+  with_items: "{{ mysql_root_hosts.stdout_lines|default([]) }}"
+  when: (mysql_install_packages | bool) and ('5.7.' in mysql_cli_version.stdout)
+
+# Set root password for MySQL < 5.7.x.
+- name: Update MySQL root password for localhost root account (< 5.7.x).
+  shell: >
+    mysql -NBe
+    'SET PASSWORD FOR "{{ mysql_root_username }}"@"{{ item }}" = PASSWORD("{{ mysql_root_password }}");'
+  with_items: "{{ mysql_root_hosts.stdout_lines|default([]) }}"
+  when: (mysql_install_packages | bool) and ('5.7.' not in mysql_cli_version.stdout)
+
+- name: Remove anonymous MySQL users.
+  mysql_user:
+     name: ""
+     host: "{{ item }}"
+     state: absent
+  with_items: "{{ mysql_anonymous_hosts.stdout_lines|default([]) }}"
+
+- name: Remove MySQL test database.
+  mysql_db: "name='test' state=absent"
+

@@ -1,0 +1,7 @@
+---
+- hosts: obsession-webserver
+  remote_user: hacker
+  become: yes
+  roles:
+    - app
+    - app-db
