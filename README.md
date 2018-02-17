@@ -24,7 +24,7 @@ If it's clean OrangePi item - they won't.
 - Find out `ip` of your server. Let's say it's `192.168.1.100`
 - Put it in `inventory.config`
 - And uncomment lines in there
-- Replace `hacker` with username of your user on server in `inventory.config`, `webserver.yml` and `roles/mysql/vars/main.yml (also mysql_user_home)` files
+- Create a user with username `hacker` on your server or replace `hacker` with your own username in `inventory.config`, `webserver.yml` and `roles/mysql/vars/main.yml (also mysql_user_home)` files
 - Run `ansible-playbook webserver.yml --ask-become-pass -v -i inventory.config`
 - Place this line `192.168.1.100   obsession.wf` in your `/ets/hosts`
 - Open `http://obsession.wf` in your browser 
